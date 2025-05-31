@@ -1,3 +1,17 @@
+"""
+Main script for the C compiler.
+
+This script orchestrates the compilation process of a C source file.
+It involves the following steps:
+1. Lexical analysis (scanning)
+2. Parsing to generate an Abstract Syntax Tree (AST)
+3. Semantic analysis
+4. Three-Address Code (TAC) generation
+5. Optionally, execution of the compiled code using a platform-specific interpreter.
+
+The script accepts various command-line arguments to control compilation options,
+such as saving intermediate representations (tokens, AST, symbol table) and error logs.
+"""
 import os
 import sys
 import time
@@ -23,6 +37,28 @@ def limit_virtual_memory():
 
 
 def compile(args):
+    """
+    Compiles the C source file specified in the command-line arguments.
+
+    This function coordinates the different phases of the compilation process:
+    - Initializes symbol table and memory managers.
+    - Parses the source file (which includes scanning and semantic analysis).
+    - Reports compilation success or failure along with errors.
+    - Optionally saves intermediate compilation artifacts (AST, symbol table, tokens, error logs).
+    - Generates and saves the output three-address code.
+    - Optionally, executes the compiled code using a platform-specific interpreter.
+
+    Args:
+        args: An argparse.Namespace object containing the parsed command-line arguments.
+              Expected attributes include:
+              - source_file (str): Path to the C source file.
+              - abstract_syntax_tree (bool): Flag to save the AST.
+              - symbol_table (bool): Flag to save the symbol table.
+              - tokens (bool): Flag to save tokens.
+              - error_files (bool): Flag to save error logs.
+              - run (bool): Flag to execute the compiled program.
+              - verbose (bool): Flag for verbose output during execution.
+    """
     print("Compiling", args.source_file)
     SymbolTableManager.init()
     MemoryManager.init()
@@ -51,28 +87,38 @@ def compile(args):
     parser.code_generator.save_output()
     if args.run and not SymbolTableManager.error_flag:
         print("Executing compiled program")
+        # Determine the correct interpreter executable based on the operating system.
         plat = platform.system()
         if plat == "Windows":
             tester_file = os.path.join(script_dir, "interpreter", "tester_Windows.exe")
         elif plat == "Linux":
             tester_file = os.path.join(script_dir, "interpreter", "tester_Linux.out")
-        elif plat == "Darwin":
+        elif plat == "Darwin": # macOS
             tester_file = os.path.join(script_dir, "interpreter", "tester_Mac.out")
         else:
             raise RuntimeError("Unsupported operating system for code execution!")
         output_file = os.path.join(script_dir, "output", "output.txt")
         output_dir = os.path.dirname(output_file)
         if os.path.exists(output_file):
+            # Set memory limits for the executed program, currently only on Linux.
+            # preexec_fn is used to call limit_virtual_memory in the child process
+            # before the interpreter executable is loaded.
             preexec_fn = limit_virtual_memory if plat == "Linux" else None
+
+            # Capture stderr if not in verbose mode to hide interpreter's internal messages.
             stderr = sp.PIPE if not args.verbose else None
             start = time.time()
             try:
+                # Execute the compiled program using the appropriate interpreter.
+                # A timeout is set to prevent runaway programs.
                 tester_output = sp.check_output(tester_file, cwd=output_dir, 
-                                                stderr=stderr, timeout=10, 
+                                                stderr=stderr, timeout=10, # 10-second timeout
                                                 preexec_fn=preexec_fn).decode("utf-8")
             except sp.TimeoutExpired:
                 print("RuntimeError: Execution timed out!")
             else:
+                # If not verbose, filter the output to show only lines explicitly printed by the program
+                # (i.e., lines starting with "PRINT" from the interpreter's output).
                 if not args.verbose:
                     tester_output = "\n".join([line.replace("PRINT", "").strip() 
                                                for line in tester_output.splitlines()
